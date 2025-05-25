@@ -8,7 +8,6 @@ import { about } from './commands/about';
 import { greeting, checkMembership } from './text/greeting';
 import { production, development } from './core';
 import { setupBroadcast } from './commands/broadcast';
-import { startCashfreeBot } from './cashfree'; // Import Cashfree handler
 import webhook from '../pages/api/webhook'; // Import webhook handler
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
@@ -206,17 +205,41 @@ bot.action('refresh_users', async (ctx) => {
 // Vercel export to handle both bot updates and Cashfree webhook
 export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
   try {
-    if (req.body && 'update_id' in req.body) {
+    // Handle favicon or health check requests
+    if (req.method === 'GET') {
+      if (req.headers['user-agent']?.includes('vercel-favicon') || req.url?.includes('favicon')) {
+        return res.status(200).json({ success: true, message: 'Favicon request ignored' });
+      }
+      console.warn('Unexpected GET request:', {
+        url: req.url,
+        headers: req.headers,
+        ip: req.headers['x-real-ip'] || req.headers['x-forwarded-for'],
+      });
+      return res.status(405).json({ success: false, error: 'Method Not Allowed: Use POST for Telegram or Cashfree webhooks' });
+    }
+
+    // Handle Telegram or Cashfree POST requests
+    if (!req.body) {
+      console.error('Request body is undefined:', {
+        url: req.url,
+        headers: req.headers,
+        method: req.method,
+      });
+      return res.status(400).json({ success: false, error: 'Request body is required' });
+    }
+
+    if ('update_id' in req.body) {
       // Handle Telegram bot updates
       await production(req, res, bot);
-    } else if (req.body && 'order_id' in req.body) {
+    } else if ('order_id' in req.body) {
       // Handle Cashfree webhook
       await webhook(req, res);
     } else {
-      console.error('Invalid request received:', {
+      console.error('Invalid request payload:', {
         body: req.body,
         headers: req.headers,
         method: req.method,
+        url: req.url,
       });
       return res.status(400).json({
         success: false,
