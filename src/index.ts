@@ -1,20 +1,15 @@
 import { Telegraf, Context } from 'telegraf';
 import { VercelRequest, VercelResponse } from '@vercel/node';
-
 import { fetchChatIdsFromFirebase, getLogsByDate } from './utils/chatStore';
 import { saveToFirebase } from './utils/saveToFirebase';
 import { logMessage } from './utils/logMessage';
 import { handleTranslateCommand } from './commands/translate';
-
-
 import { about } from './commands/about';
-import { greeting, checkMembership } from './text/greeting'; // import checkMembership here
+import { greeting, checkMembership } from './text/greeting';
 import { production, development } from './core';
 import { setupBroadcast } from './commands/broadcast';
 import { studySearch } from './commands/study';
-
-// Helper to check private chat type
-const isPrivateChat = (type?: string) => type === 'private';
+import { startCashfreeBot } from './commands/cashfree'; // Import Cashfree handler
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ENVIRONMENT = process.env.NODE_ENV || '';
@@ -27,17 +22,16 @@ console.log(`Running bot in ${ENVIRONMENT} mode`);
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// Middleware to restrict private chat commands to only members of required channel/group
+// Middleware for membership check
 bot.use(async (ctx, next) => {
   if (ctx.chat && isPrivateChat(ctx.chat.type)) {
     const isAllowed = await checkMembership(ctx);
-    if (!isAllowed) return; // user not allowed, do not proceed
+    if (!isAllowed) return;
   }
   await next();
 });
 
-// --- Commands ---
-
+// Existing command handlers (unchanged)
 bot.command('add', async (ctx) => {
   if (!isPrivateChat(ctx.chat?.type)) return;
   await ctx.reply('Please share through this bot: @NeetAspirantsBot', {
@@ -51,7 +45,6 @@ bot.command('about', async (ctx) => {
   if (!isPrivateChat(ctx.chat?.type)) return;
   await about()(ctx);
 });
-
 bot.command('start', async (ctx) => {
   const chat = ctx.chat;
   const user = ctx.from;
@@ -76,8 +69,6 @@ bot.command('start', async (ctx) => {
     );
   }
 });
-
-// Admin: /users
 bot.command('users', async (ctx) => {
   if (ctx.from?.id !== ADMIN_ID) return ctx.reply('You are not authorized.');
   try {
@@ -93,8 +84,6 @@ bot.command('users', async (ctx) => {
     await ctx.reply('❌ Unable to fetch user count.');
   }
 });
-
-// Admin: /logs
 bot.command('logs', async (ctx) => {
   if (ctx.from?.id !== ADMIN_ID) return;
   const parts = ctx.message?.text?.split(' ') || [];
@@ -117,12 +106,9 @@ bot.command('logs', async (ctx) => {
     await ctx.reply('❌ Error fetching logs.');
   }
 });
-
-// Admin: /broadcast
 setupBroadcast(bot);
 
-// --- Main Handler: Log + Search ---
-
+// Existing message handler (unchanged)
 bot.on('message', async (ctx) => {
   const chat = ctx.chat;
   const user = ctx.from;
@@ -132,32 +118,18 @@ bot.on('message', async (ctx) => {
 
   const alreadyNotified = await saveToFirebase(chat);
 
-  // Logging
   if (isPrivateChat(chat.type)) {
     let logText = '[Unknown/Unsupported message type]';
-
-    if (message.text) {
-      logText = message.text;
-    } else if (message.photo) {
-      logText = '[Photo message]';
-    } else if (message.document) {
-      logText = `[Document: ${message.document.file_name || 'Unnamed'}]`;
-    } else if (message.video) {
-      logText = '[Video message]';
-    } else if (message.voice) {
-      logText = '[Voice message]';
-    } else if (message.audio) {
-      logText = '[Audio message]';
-    } else if (message.sticker) {
-      logText = `[Sticker: ${message.sticker.emoji || 'Sticker'}]`;
-    } else if (message.contact) {
-      logText = '[Contact shared]';
-    } else if (message.location) {
-      const loc = message.location;
-      logText = `[Location: ${loc.latitude}, ${loc.longitude}]`;
-    } else if (message.poll) {
-      logText = `[Poll: ${message.poll.question}]`;
-    }
+    if (message.text) logText = message.text;
+    else if (message.photo) logText = '[Photo message]';
+    else if (message.document) logText = `[Document: ${message.document.file_name || 'Unnamed'}]`;
+    else if (message.video) logText = '[Video message]';
+    else if (message.voice) logText = '[Voice message]';
+    else if (message.audio) logText = '[Audio message]';
+    else if (message.sticker) logText = `[Sticker: ${message.sticker.emoji || 'Sticker'}]`;
+    else if (message.contact) logText = '[Contact shared]';
+    else if (message.location) logText = `[Location: ${message.location.latitude}, ${message.location.longitude}]`;
+    else if (message.poll) logText = `[Poll: ${message.poll.question}]`;
 
     try {
       await logMessage(chat.id, logText, user);
@@ -165,7 +137,6 @@ bot.on('message', async (ctx) => {
       console.error('Failed to log message:', err);
     }
 
-    // Forward non-text messages to admin
     if (!message.text) {
       const name = user.first_name || 'Unknown';
       const username = user.username ? `@${user.username}` : 'N/A';
@@ -182,7 +153,6 @@ bot.on('message', async (ctx) => {
     }
   }
 
-  // Study search (text + mention)
   const isPrivate = isPrivateChat(chat.type);
   const isGroup = chat.type === 'group' || chat.type === 'supergroup';
   const mentionedEntity = message.entities?.find(
@@ -199,7 +169,6 @@ bot.on('message', async (ctx) => {
     await studySearch()(ctx);
   }
 
-  // Notify admin for first interaction
   if (!alreadyNotified && chat.id !== ADMIN_ID) {
     const name = user.first_name || chat.title || 'Unknown';
     const username = user.username ? `@${user.username}` : chat.username ? `@${chat.username}` : 'N/A';
@@ -213,7 +182,7 @@ bot.on('message', async (ctx) => {
   }
 });
 
-// --- New Group Members ---
+// Existing new chat members handler (unchanged)
 bot.on('new_chat_members', async (ctx) => {
   for (const member of ctx.message.new_chat_members) {
     const name = member.first_name || 'there';
@@ -229,7 +198,7 @@ bot.on('new_chat_members', async (ctx) => {
   }
 });
 
-// --- Refresh Inline Button ---
+// Existing refresh users handler (unchanged)
 bot.action('refresh_users', async (ctx) => {
   if (ctx.from?.id !== ADMIN_ID) return ctx.answerCbQuery('Unauthorized');
   try {
@@ -247,9 +216,17 @@ bot.action('refresh_users', async (ctx) => {
   }
 });
 
-// --- Vercel Export ---
+// Vercel export to handle both bot updates and Cashfree webhook
 export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
-  await production(req, res, bot);
+  if (req.body && 'update_id' in req.body) {
+    // Handle Telegram bot updates
+    await production(req, res, bot);
+  } else if (req.body && 'order_id' in req.body) {
+    // Handle Cashfree webhook
+    await webhook(req, res);
+  } else {
+    return res.status(400).json({ success: false, error: 'Invalid request' });
+  }
 };
 
 if (ENVIRONMENT !== 'production') {
