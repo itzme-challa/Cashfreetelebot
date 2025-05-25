@@ -7,7 +7,6 @@ export default function Success() {
 
   useEffect(() => {
     if (order_id && product_id) {
-      // Fetch order details from Cashfree to get the telegramLink
       const fetchOrderDetails = async () => {
         try {
           const response = await fetch('/api/cashfree/order', {
@@ -17,15 +16,14 @@ export default function Success() {
           });
           const data = await response.json();
           if (data.success && data.telegramLink) {
-            // Redirect to Telegram link
             window.location.href = data.telegramLink;
           } else {
             console.error('Failed to fetch Telegram link:', data.error);
-            alert('Payment successful, but unable to retrieve material link. Please contact support.');
+            alert('Payment successful, but unable to retrieve material link. Please contact support (@SupportBot).');
           }
         } catch (error) {
           console.error('Error fetching order details:', error);
-          alert('An error occurred. Please contact support.');
+          alert('An error occurred. Please contact support (@SupportBot).');
         }
       };
 
@@ -38,7 +36,7 @@ export default function Success() {
       <h1>Payment Successful!</h1>
       <p>Order ID: {order_id || 'Loading...'}</p>
       <p>Redirecting you to your material...</p>
-      <p>If you are not redirected, please contact support with your Order ID.</p>
+      <p>If you are not redirected, please contact support (@SupportBot) with your Order ID.</p>
     </div>
   );
 }
