@@ -1,8 +1,6 @@
 import { Telegraf, Context } from 'telegraf';
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { fetchChatIdsFromFirebase, getLogsByDate } from './utils/chatStore';
-import { saveToFirebase } from './utils/saveToFirebase';
-import { logMessage } from './utils/logMessage';
+import { fetchChatIdsFromFirebase, getLogsByDate, saveToFirebase, logMessage } from './utils/firebase';
 import { handleTranslateCommand } from './commands/translate';
 import { about } from './commands/about';
 import { greeting, checkMembership } from './text/greeting';
@@ -29,6 +27,7 @@ bot.use(async (ctx, next) => {
       update_id: ctx.update?.update_id,
       chat_id: ctx.chat?.id,
       message: ctx.message?.text,
+      timestamp: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
     });
     if (ctx.chat && isPrivateChat(ctx.chat.type)) {
       const isAllowed = await checkMembership(ctx);
@@ -39,6 +38,7 @@ bot.use(async (ctx, next) => {
     console.error('Error in Telegraf middleware:', {
       error: err.message,
       stack: err.stack,
+      timestamp: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
     });
     if (ctx.chat) {
       await ctx.reply('An error occurred. Please try again or contact support (@SupportBot).');
@@ -281,6 +281,7 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
       path: req.url,
       headers: req.headers,
       body: req.body ? JSON.stringify(req.body, null, 2) : 'No body',
+      timestamp: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
     });
 
     // Check if headers have already been sent
@@ -292,12 +293,14 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
     // Handle GET requests (health checks, favicon, etc.)
     if (req.method === 'GET') {
       console.log('Handling GET request');
+      console.log('Sending response:', { status: 200, headersSent: res.headersSent });
       return res.status(200).json({ success: true, message: 'Server is running' });
     }
 
     // Only allow POST requests for Telegram webhook
     if (req.method !== 'POST') {
       console.log('Invalid method:', req.method);
+      console.log('Sending response:', { status: 405, headersSent: res.headersSent });
       return res.status(405).json({ success: false, error: 'Method Not Allowed' });
     }
 
@@ -308,6 +311,7 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
         method: req.method,
         path: req.url,
       });
+      console.log('Sending response:', { status: 400, headersSent: res.headersSent });
       return res.status(400).json({
         success: false,
         error: 'Invalid request: No request body provided',
@@ -320,11 +324,13 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
       await bot.handleUpdate(req.body);
       console.log('Telegram update processed successfully');
       if (!res.headersSent) {
+        console.log('Sending response:', { status: 200, headersSent: res.headersSent });
         return res.status(200).json({ success: true, message: 'Telegram update processed' });
       }
     } else {
       console.error('Invalid payload:', req.body);
       if (!res.headersSent) {
+        console.log('Sending response:', { status: 400, headersSent: res.headersSent });
         return res.status(400).json({
           success: false,
           error: 'Invalid request: Expected Telegram update',
@@ -336,8 +342,10 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
       error: error.message,
       stack: error.stack,
       headersSent: res.headersSent,
+      timestamp: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
     });
     if (!res.headersSent) {
+      console.log('Sending error response:', { status: 500, headersSent: res.headersSent });
       return res.status(500).json({
         success: false,
         error: 'Server error',
