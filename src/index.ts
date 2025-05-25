@@ -11,7 +11,6 @@ import { about } from './commands/about';
 import { greeting, checkMembership } from './text/greeting'; // import checkMembership here
 import { production, development } from './core';
 import { setupBroadcast } from './commands/broadcast';
-import { studySearch } from './commands/study';
 
 // Helper to check private chat type
 const isPrivateChat = (type?: string) => type === 'private';
