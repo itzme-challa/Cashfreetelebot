@@ -1,8 +1,8 @@
 import axios from 'axios';
 import { Telegraf, Context } from 'telegraf';
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import materials from '../public/material.json'; // Adjust path based on your project structure
-import { saveToFirebase, logMessage } from './utils'; // Adjust path to utils
+import materials from '../public/material.json';
+import { saveToFirebase, logMessage } from './utils';
 
 // Define material types
 interface MaterialItem {
@@ -21,7 +21,7 @@ const CASHFREE_CLIENT_SECRET = process.env.CASHFREE_CLIENT_SECRET || '';
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || '';
 const MATERIAL_BOT_USERNAME = 'Material_eduhubkmrbot';
-const PAYMENT_AMOUNT = 100; // Fixed amount in INR, adjust as needed
+const PAYMENT_AMOUNT = 100; // Fixed amount in INR
 const ADMIN_ID = 6930703214;
 
 // Initialize bot
@@ -239,7 +239,7 @@ bot.command('search', async (ctx: Context) => {
         { parse_mode: 'Markdown', disable_web_page_preview: true }
       );
     } else {
-      await nextCtx.reply('❌ Failed to generate payment links. Please try again or contact support.');
+      await nextCtx.reply('❌ Failed to generate payment links. Please try again or contact support (@SupportBot).');
     }
   });
 });
