@@ -8,6 +8,7 @@ import { about } from './commands/about';
 import { greeting, checkMembership } from './text/greeting';
 import { production, development } from './core';
 import { setupBroadcast } from './commands/broadcast';
+import { startCashfreeBot } from './cashfree'; // Import Cashfree handler
 import webhook from '../pages/api/webhook'; // Import webhook handler
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
@@ -33,7 +34,7 @@ bot.use(async (ctx, next) => {
   await next();
 });
 
-// Existing command handlers
+// Command handlers
 bot.command('add', async (ctx) => {
   if (!isPrivateChat(ctx.chat?.type)) return;
   await ctx.reply('Please share through this bot: @NeetAspirantsBot', {
@@ -110,7 +111,7 @@ bot.command('logs', async (ctx) => {
 });
 setupBroadcast(bot);
 
-// Existing message handler
+// Message handler
 bot.on('message', async (ctx) => {
   const chat = ctx.chat;
   const user = ctx.from;
@@ -168,7 +169,7 @@ bot.on('message', async (ctx) => {
   }
 });
 
-// Existing new chat members handler
+// New chat members handler
 bot.on('new_chat_members', async (ctx) => {
   for (const member of ctx.message.new_chat_members) {
     const name = member.first_name || 'there';
@@ -184,7 +185,7 @@ bot.on('new_chat_members', async (ctx) => {
   }
 });
 
-// Existing refresh users handler
+// Refresh users handler
 bot.action('refresh_users', async (ctx) => {
   if (ctx.from?.id !== ADMIN_ID) return ctx.answerCbQuery('Unauthorized');
   try {
@@ -202,7 +203,7 @@ bot.action('refresh_users', async (ctx) => {
   }
 });
 
-// Vercel export to handle both bot updates and Cashfree webhook
+// Vercel export
 export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
   try {
     if (req.method === 'GET') {
@@ -223,10 +224,13 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
 
     if ('update_id' in req.body) {
       // Handle Telegram bot updates
-      await production(req, res, bot);
+      await startCashfreeBot(req, res);
+      // Ensure no further response is sent
+      return;
     } else if ('order_id' in req.body) {
       // Handle Cashfree webhook
       await webhook(req, res);
+      return;
     } else {
       console.error('Invalid request payload:', {
         body: req.body,
@@ -240,7 +244,9 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
     }
   } catch (error) {
     console.error('Error in startVercel:', error);
-    return res.status(500).json({ success: false, error: 'Server error' });
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, error: 'Server error' });
+    }
   }
 };
 
