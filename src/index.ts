@@ -6,9 +6,9 @@ import { logMessage } from './utils/logMessage';
 import { handleTranslateCommand } from './commands/translate';
 import { about } from './commands/about';
 import { greeting, checkMembership } from './text/greeting';
-import { production, development } from './core';
 import { setupBroadcast } from './commands/broadcast';
-import webhook from '../pages/api/webhook'; // Import webhook handler
+import { startCashfreeBot } from './cashfree'; // Import Cashfree bot handler
+import webhook from '../pages/api/webhook';
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ENVIRONMENT = process.env.NODE_ENV || '';
@@ -31,6 +31,106 @@ bot.use(async (ctx, next) => {
     if (!isAllowed) return;
   }
   await next();
+});
+
+// Command handlers from cashfree.ts (integrated here to avoid separate bot instance)
+bot.command('search', async (ctx: Context) => {
+  if (!isPrivateChat(ctx.chat?.type)) {
+    return ctx.reply('This command is only available in private chats.');
+  }
+
+  const user = ctx.from;
+  const chat = ctx.chat;
+  if (!user || !chat) return;
+
+  const query = ctx.message?.text?.split(' ').slice(1).join(' ') || '';
+  if (!query) {
+    return ctx.reply('Please provide a search query. Example: /search pw pyqs');
+  }
+
+  // Log the search
+  await logMessage(chat.id, `/search ${query}`, user);
+
+  // Search materials (assuming searchMaterials is exported from cashfree.ts)
+  const { searchMaterials } = require('./cashfree');
+  const results = searchMaterials(query);
+  if (results.length === 0) {
+    return ctx.reply('No materials found for your query. Try something like "pw pyqs" or "mtg biology".');
+  }
+
+  // Prompt for payment details
+  await ctx.reply(
+    `📚 Found ${results.length} matching material(s):\n\n${results
+      .map((item: any) => `- ${item.label}`)
+      .join('\n')}\n\nTo proceed, please provide your details in the format:\n*Name, Email, Phone Number*\nExample: John Doe, john@example.com, 9876543210`,
+    { parse_mode: 'Markdown' }
+  );
+
+  // Set up a listener for the next message to capture payment details
+  bot.once('text', async (nextCtx: Context) => {
+    if (nextCtx.chat?.id !== chat.id) return; // Ensure it's the same user
+
+    const details = nextCtx.message?.text?.split(',').map((s) => s.trim());
+    if (!details || details.length < 3) {
+      await nextCtx.reply('Invalid format. Please provide: Name, Email, Phone Number');
+      return;
+    }
+
+    const [customerName, customerEmail, customerPhone] = details;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const phoneRegex = /^\d{10}$/;
+
+    if (!emailRegex.test(customerEmail)) {
+      await nextCtx.reply('Invalid email format. Please try again.');
+      return;
+    }
+    if (!phoneRegex.test(customerPhone)) {
+      await nextCtx.reply('Invalid phone number. Please provide a 10-digit number.');
+      return;
+    }
+
+    // Save user interaction
+    await saveToFirebase(chat);
+    await logMessage(chat.id, `Payment details: ${customerName}, ${customerEmail}, ${customerPhone}`, user);
+
+    // Create payment links for each result
+    const { createOrder } = require('./cashfree');
+    const paymentLinks: string[] = [];
+    for (const item of results) {
+      const telegramLink = `https://t.me/${'Material_eduhubkmrbot'}?start=${item.key}`;
+      const productId = `${user.id}_${item.key}`;
+      const productName = item.label;
+
+      const orderResult = await createOrder({
+        productId,
+        productName,
+        amount: 100, // Fixed amount from cashfree.ts
+        telegramLink,
+        customerName,
+        customerEmail,
+        customerPhone,
+      });
+
+      if (orderResult.success) {
+        const paymentUrl = process.env.NODE_ENV === 'production'
+          ? `https://www.cashfree.com/checkout/${orderResult.paymentSessionId}`
+          : `https://test.cashfree.com/checkout/${orderResult.paymentSessionId}`;
+        paymentLinks.push(`- ${item.label}: [Pay Now](${paymentUrl})`);
+      } else {
+        paymentLinks.push(`- ${item.label}: Failed to generate payment link`);
+        await logMessage(chat.id, `Failed to create order for ${item.label}: ${orderResult.error}`, user);
+      }
+    }
+
+    if (paymentLinks.length > 0) {
+      await nextCtx.reply(
+        `Please complete the payment to access the materials:\n\n${paymentLinks.join('\n')}`,
+        { parse_mode: 'Markdown', disable_web_page_preview: true }
+      );
+    } else {
+      await nextCtx.reply('❌ Failed to generate payment links. Please try again or contact support (@SupportBot).');
+    }
+  });
 });
 
 // Existing command handlers
@@ -222,8 +322,9 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
     }
 
     if ('update_id' in req.body) {
-      // Handle Telegram bot updates
-      await production(req, res, bot);
+      // Handle Telegram bot updates (including Cashfree bot logic)
+      await bot.handleUpdate(req.body);
+      return res.status(200).json({ success: true });
     } else if ('order_id' in req.body) {
       // Handle Cashfree webhook
       await webhook(req, res);
@@ -245,5 +346,7 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
 };
 
 if (ENVIRONMENT !== 'production') {
-  development(bot);
+  // Launch bot in development mode (e.g., using polling)
+  bot.launch();
+  console.log('Bot started in development mode');
 }
