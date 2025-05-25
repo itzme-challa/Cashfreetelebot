@@ -8,7 +8,7 @@ import { about } from './commands/about';
 import { greeting, checkMembership } from './text/greeting';
 import { production, development } from './core';
 import { setupBroadcast } from './commands/broadcast';
-import webhook from '../pages/api/webhook';
+import webhook from '../pages/api/webhook'; // Import webhook handler
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ENVIRONMENT = process.env.NODE_ENV || '';
@@ -33,7 +33,7 @@ bot.use(async (ctx, next) => {
   await next();
 });
 
-// Command handlers
+// Existing command handlers
 bot.command('add', async (ctx) => {
   if (!isPrivateChat(ctx.chat?.type)) return;
   await ctx.reply('Please share through this bot: @NeetAspirantsBot', {
@@ -55,7 +55,7 @@ bot.command('start', async (ctx) => {
   const alreadyNotified = await saveToFirebase(chat);
 
   if (isPrivateChat(chat.type)) {
-    await greeting(ctx);
+    await greeting()(ctx);
     await logMessage(chat.id, '/start', user);
   }
 
@@ -66,7 +66,7 @@ bot.command('start', async (ctx) => {
 
     await ctx.telegram.sendMessage(
       ADMIN_ID,
-      `*New ${chatTypeLabel} started!*\n\n*Name:* ${name}\n*Username:* ${username}\n*Chat ID:* ${chat.id}\n*Type:* ${chat.type}`,
+      `*New ${chatTypeLabel} started the bot!*\n\n*Name:* ${name}\n*Username:* ${username}\n*Chat ID:* ${chat.id}\n*Type:* ${chat.type}`,
       { parse_mode: 'Markdown' }
     );
   }
@@ -110,7 +110,7 @@ bot.command('logs', async (ctx) => {
 });
 setupBroadcast(bot);
 
-// Message handler
+// Existing message handler
 bot.on('message', async (ctx) => {
   const chat = ctx.chat;
   const user = ctx.from;
@@ -122,16 +122,16 @@ bot.on('message', async (ctx) => {
 
   if (isPrivateChat(chat.type)) {
     let logText = '[Unknown/Unsupported message type]';
-    if ('text' in message) logText = message.text;
-    else if ('photo' in message) logText = '[Photo message]';
-    else if ('document' in message) logText = `[Document: ${message.document?.file_name || 'Unnamed'}]`;
-    else if ('video' in message) logText = '[Video message]';
-    else if ('voice' in message) logText = '[Voice message]';
-    else if ('audio' in message) logText = '[Audio message]';
-    else if ('sticker' in message) logText = `[Sticker: ${message.sticker?.emoji || 'Sticker'}]`;
-    else if ('contact' in message) logText = '[Contact shared]';
-    else if ('location' in message) logText = `[Location: ${message.location?.latitude}, ${message.location?.longitude}]`;
-    else if ('poll' in message) logText = `[Poll: ${message.poll?.question}]`;
+    if (message.text) logText = message.text;
+    else if (message.photo) logText = '[Photo message]';
+    else if (message.document) logText = `[Document: ${message.document.file_name || 'Unnamed'}]`;
+    else if (message.video) logText = '[Video message]';
+    else if (message.voice) logText = '[Voice message]';
+    else if (message.audio) logText = '[Audio message]';
+    else if (message.sticker) logText = `[Sticker: ${message.sticker.emoji || 'Sticker'}]`;
+    else if (message.contact) logText = '[Contact shared]';
+    else if (message.location) logText = `[Location: ${message.location.latitude}, ${message.location.longitude}]`;
+    else if (message.poll) logText = `[Poll: ${message.poll.question}]`;
 
     try {
       await logMessage(chat.id, logText, user);
@@ -139,7 +139,7 @@ bot.on('message', async (ctx) => {
       console.error('Failed to log message:', err);
     }
 
-    if (!('text' in message)) {
+    if (!message.text) {
       const name = user.first_name || 'Unknown';
       const username = user.username ? `@${user.username}` : 'N/A';
       const time = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
@@ -168,9 +168,9 @@ bot.on('message', async (ctx) => {
   }
 });
 
-// New chat members handler
+// Existing new chat members handler
 bot.on('new_chat_members', async (ctx) => {
-  for (const member of ctx.message?.new_chat_members || []) {
+  for (const member of ctx.message.new_chat_members) {
     const name = member.first_name || 'there';
     if (member.username === ctx.botInfo?.username) {
       await ctx.reply(`*Thanks for adding me!*\n\nType *@${BOT_USERNAME} mtg bio* to get study material.`, {
@@ -184,7 +184,7 @@ bot.on('new_chat_members', async (ctx) => {
   }
 });
 
-// Refresh users handler
+// Existing refresh users handler
 bot.action('refresh_users', async (ctx) => {
   if (ctx.from?.id !== ADMIN_ID) return ctx.answerCbQuery('Unauthorized');
   try {
@@ -202,10 +202,11 @@ bot.action('refresh_users', async (ctx) => {
   }
 });
 
-// Vercel export
+// Vercel export to handle both bot updates and Cashfree webhook
 export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
   try {
     if (req.method === 'GET') {
+      // Handle health checks or favicon requests
       return res.status(200).json({ success: true, message: 'Server is running' });
     }
 
@@ -221,11 +222,11 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
     }
 
     if ('update_id' in req.body) {
+      // Handle Telegram bot updates
       await production(req, res, bot);
-      return; // Ensure no further response is sent
     } else if ('order_id' in req.body) {
+      // Handle Cashfree webhook
       await webhook(req, res);
-      return; // Ensure no further response is sent
     } else {
       console.error('Invalid request payload:', {
         body: req.body,
