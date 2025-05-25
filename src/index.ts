@@ -24,8 +24,13 @@ const bot = new Telegraf(BOT_TOKEN);
 // Helper to check private chat type
 const isPrivateChat = (type?: string) => type === 'private';
 
-// Middleware for membership check
+// Middleware to log all updates
 bot.use(async (ctx, next) => {
+  console.log('Processing Telegram update:', {
+    update_id: ctx.update?.update_id,
+    chat_id: ctx.chat?.id,
+    message: ctx.message?.text,
+  });
   if (ctx.chat && isPrivateChat(ctx.chat.type)) {
     const isAllowed = await checkMembership(ctx);
     if (!isAllowed) return;
@@ -33,7 +38,7 @@ bot.use(async (ctx, next) => {
   await next();
 });
 
-// /search command handler (moved from cashfree.ts)
+// /search command handler
 bot.command('search', async (ctx: Context) => {
   if (!isPrivateChat(ctx.chat?.type)) {
     return ctx.reply('This command is only available in private chats.');
@@ -302,27 +307,41 @@ bot.action('refresh_users', async (ctx) => {
   }
 });
 
-// Vercel export to handle both bot updates and Cashfree webhook
+// Vercel handler
 export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
   try {
+    // Log request details
     console.log('Received request:', {
       method: req.method,
+      path: req.url,
       headers: req.headers,
-      body: JSON.stringify(req.body, null, 2),
+      body: req.body ? JSON.stringify(req.body, null, 2) : 'No body',
     });
 
+    // Check if headers have already been sent
+    if (res.headersSent) {
+      console.error('Headers already sent, cannot process request');
+      return;
+    }
+
+    // Handle GET requests (health checks, favicon, etc.)
     if (req.method === 'GET') {
+      console.log('Handling GET request');
       return res.status(200).json({ success: true, message: 'Server is running' });
     }
 
+    // Only allow POST requests for webhooks
     if (req.method !== 'POST') {
+      console.log('Invalid method:', req.method);
       return res.status(405).json({ success: false, error: 'Method Not Allowed' });
     }
 
+    // Ensure request body exists
     if (!req.body) {
       console.error('Request body is undefined:', {
         headers: req.headers,
         method: req.method,
+        path: req.url,
       });
       return res.status(400).json({
         success: false,
@@ -330,32 +349,50 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
       });
     }
 
-    if ('update_id' in req.body) {
-      console.log('Processing Telegram update:', req.body.update_id);
-      await bot.handleUpdate(req.body);
-      return res.status(200).json({ success: true, message: 'Telegram update processed' });
-    } else if ('order_id' in req.body) {
-      console.log('Processing Cashfree webhook:', req.body.order_id);
+    // Route based on URL path
+    const path = req.url?.toLowerCase() || '';
+
+    if (path.includes('/api/webhook')) {
+      console.log('Routing to Cashfree webhook:', req.body.order_id);
       await webhook(req, res);
-      // Note: webhook handler should handle its own response
-      return;
+      return; // Webhook handles its own response
+    } else if (path.includes('/api/index') || path.includes('/api')) {
+      if ('update_id' in req.body) {
+        console.log('Processing Telegram update:', req.body.update_id);
+        await bot.handleUpdate(req.body);
+        console.log('Telegram update processed successfully');
+        return res.status(200).json({ success: true, message: 'Telegram update processed' });
+      } else {
+        console.error('Invalid Telegram payload:', req.body);
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid request: Expected Telegram update',
+        });
+      }
     } else {
-      console.error('Invalid request payload:', {
-        body: req.body,
-        headers: req.headers,
-        method: req.method,
-      });
-      return res.status(400).json({
+      console.error('Unknown path:', path);
+      return res.status(404).json({
         success: false,
-        error: 'Invalid request: Expected Telegram update or Cashfree webhook',
+        error: 'Invalid endpoint',
       });
     }
   } catch (error) {
-    console.error('Error in startVercel:', error);
-    return res.status(500).json({ success: false, error: 'Server error', details: error.message });
+    console.error('Error in startVercel:', {
+      error: error.message,
+      stack: error.stack,
+      headersSent: res.headersSent,
+    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: 'Server error',
+        details: error.message,
+      });
+    }
   }
 };
 
+// Start bot in development mode (polling)
 if (ENVIRONMENT !== 'production') {
   console.log('Starting bot in development mode with polling');
   bot.launch().catch((err) => {
