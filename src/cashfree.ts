@@ -5,7 +5,7 @@ import materials from '../public/material.json'; // Adjust path based on your pr
 import { saveToFirebase, logMessage } from './utils'; // Adjust path to utils
 import { VercelRequestBody } from '@vercel/node';
 
-// Define material type based on material.json
+// Define material types
 interface MaterialItem {
   label: string;
   key: string;
@@ -21,12 +21,12 @@ const CASHFREE_CLIENT_ID = process.env.CASHFREE_CLIENT_ID || '';
 const CASHFREE_CLIENT_SECRET = process.env.CASHFREE_CLIENT_SECRET || '';
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || '';
+const MATERIAL_BOT_USERNAME = 'Material_eduhubkmrbot';
+const PAYMENT_AMOUNT = 100; // Fixed amount in INR
+const ADMIN_ID = 6930703214;
 
 // Initialize bot
 const bot = new Telegraf(BOT_TOKEN);
-const MATERIAL_BOT_USERNAME = 'Material_eduhubkmrbot';
-const PAYMENT_AMOUNT = 100; // Fixed amount in INR, adjust as needed
-const ADMIN_ID = 6930703214;
 
 // Helper to check private chat type
 const isPrivateChat = (type?: string) => type === 'private';
@@ -73,7 +73,9 @@ async function createOrder({
 
   try {
     const response = await axios.post(
-      'https://api.cashfree.com/pg/orders',
+      process.env.NODE_ENV === 'production'
+        ? 'https://api.cashfree.com/pg/orders'
+        : 'https://sandbox.cashfree.com/pg/orders',
       {
         order_id: orderId,
         order_amount: amount,
@@ -108,11 +110,11 @@ async function createOrder({
     };
   } catch (error) {
     console.error('Cashfree order creation failed:', error?.response?.data || error.message);
-    return { success: false, error: 'Failed to create Cashfree order' };
+    return { success: false, error: 'Failed to create Cashfree order', details: error?.response?.data };
   }
 }
 
-// Vercel API handler for creating Cashfree orders
+// API handler for creating Cashfree orders
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method Not Allowed' });
@@ -153,29 +155,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   return res.status(result.success ? 200 : 500).json(result);
 }
 
-// Vercel API handler for webhook (Cashfree payment status)
+// Webhook handler for Cashfree payment status
 export async function webhook(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method Not Allowed' });
   }
 
-  const { order_id, order_status, cf_payment_id, customer_details } = req.body;
+  const { order_id, order_status, cf_payment_id, customer_details, payment_status } = req.body;
 
-  if (order_status === 'PAID') {
-    // Extract telegramLink from order_note (stored during order creation)
-    const orderResponse = await axios.get(`https://api.cashfree.com/pg/orders/${order_id}`, {
-      headers: {
-        'x-api-version': '2022-09-01',
-        'x-client-id': CASHFREE_CLIENT_ID,
-        'x-client-secret': CASHFREE_CLIENT_SECRET,
-      },
-    });
+  // Validate webhook payload
+  if (!order_id || !order_status || !customer_details) {
+    return res.status(400).json({ success: false, error: 'Invalid webhook payload' });
+  }
+
+  try {
+    // Fetch order details to get telegramLink
+    const orderResponse = await axios.get(
+      process.env.NODE_ENV === 'production'
+        ? `https://api.cashfree.com/pg/orders/${order_id}`
+        : `https://sandbox.cashfree.com/pg/orders/${order_id}`,
+      {
+        headers: {
+          'x-api-version': '2022-09-01',
+          'x-client-id': CASHFREE_CLIENT_ID,
+          'x-client-secret': CASHFREE_CLIENT_SECRET,
+        },
+      }
+    );
 
     const telegramLink = orderResponse.data.order_note;
-    const customerId = customer_details.customer_id.replace('cust_', '');
+    const customerId = customer_details.customer_id.replace('cust_', '').split('_')[0]; // Extract user ID
 
-    // Send material link to user
-    try {
+    if (order_status === 'PAID' && payment_status === 'SUCCESS') {
+      // Send material link to user
       await bot.telegram.sendMessage(
         customerId,
         `🎉 Payment successful! Here is your material link:\n${telegramLink}`,
@@ -188,12 +200,26 @@ export async function webhook(req: VercelRequest, res: VercelResponse) {
         `*Payment Successful!*\n\n*Order ID:* ${order_id}\n*Payment ID:* ${cf_payment_id}\n*Customer:* ${customer_details.customer_name}\n*Material Link:* ${telegramLink}`,
         { parse_mode: 'Markdown' }
       );
-    } catch (error) {
-      console.error('Failed to send Telegram message:', error);
-    }
-  }
+    } else {
+      // Handle payment failure
+      await bot.telegram.sendMessage(
+        customerId,
+        `❌ Payment failed for Order ID: ${order_id}. Please try again or contact support.`,
+        { parse_mode: 'Markdown' }
+      );
 
-  return res.status(200).json({ success: true });
+      await bot.telegram.sendMessage(
+        ADMIN_ID,
+        `*Payment Failed!*\n\n*Order ID:* ${order_id}\n*Payment ID:* ${cf_payment_id || 'N/A'}\n*Customer:* ${customer_details.customer_name}\n*Status:* ${order_status}`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Webhook processing failed:', error?.response?.data || error.message);
+    return res.status(500).json({ success: false, error: 'Webhook processing failed' });
+  }
 }
 
 // Register /search command
@@ -229,12 +255,13 @@ bot.command('search', async (ctx: Context) => {
   );
 
   // Set up a listener for the next message to capture payment details
-  bot.on('text', async (nextCtx: Context) => {
+  bot.once('text', async (nextCtx: Context) => {
     if (nextCtx.chat?.id !== chat.id) return; // Ensure it's the same user
 
     const details = nextCtx.message?.text?.split(',').map((s) => s.trim());
     if (!details || details.length < 3) {
-      return nextCtx.reply('Invalid format. Please provide: Name, Email, Phone Number');
+      await nextCtx.reply('Invalid format. Please provide: Name, Email, Phone Number');
+      return;
     }
 
     const [customerName, customerEmail, customerPhone] = details;
@@ -242,10 +269,12 @@ bot.command('search', async (ctx: Context) => {
     const phoneRegex = /^\d{10}$/;
 
     if (!emailRegex.test(customerEmail)) {
-      return nextCtx.reply('Invalid email format.');
+      await nextCtx.reply('Invalid email format. Please try again.');
+      return;
     }
     if (!phoneRegex.test(customerPhone)) {
-      return nextCtx.reply('Invalid phone number. Please provide a 10-digit number.');
+      await nextCtx.reply('Invalid phone number. Please provide a 10-digit number.');
+      return;
     }
 
     // Save user interaction
@@ -270,24 +299,28 @@ bot.command('search', async (ctx: Context) => {
       });
 
       if (orderResult.success) {
-        const paymentUrl = `https://www.cashfree.com/checkout/${orderResult.paymentSessionId}`;
+        const paymentUrl = process.env.NODE_ENV === 'production'
+          ? `https://www.cashfree.com/checkout/${orderResult.paymentSessionId}`
+          : `https://test.cashfree.com/checkout/${orderResult.paymentSessionId}`;
         paymentLinks.push(`- ${item.label}: [Pay Now](${paymentUrl})`);
       } else {
         paymentLinks.push(`- ${item.label}: Failed to generate payment link`);
+        await logMessage(chat.id, `Failed to create order for ${item.label}: ${orderResult.error}`, user);
       }
     }
 
-    await nextCtx.reply(
-      `Please complete the payment to access the materials:\n\n${paymentLinks.join('\n')}`,
-      { parse_mode: 'Markdown', disable_web_page_preview: true }
-    );
-
-    // Remove the listener after handling
-    bot.removeAllListeners('text');
+    if (paymentLinks.length > 0) {
+      await nextCtx.reply(
+        `Please complete the payment to access the materials:\n\n${paymentLinks.join('\n')}`,
+        { parse_mode: 'Markdown', disable_web_page_preview: true }
+      );
+    } else {
+      await nextCtx.reply('❌ Failed to generate payment links. Please try again or contact support.');
+    }
   });
 });
 
-// Export bot for Vercel (integrate with index.ts)
+// Export bot for Vercel
 export const startCashfreeBot = async (req: VercelRequest, res: VercelResponse) => {
   await bot.handleUpdate(req.body);
   return res.status(200).json({ success: true });
