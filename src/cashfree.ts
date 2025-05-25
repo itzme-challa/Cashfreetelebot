@@ -3,7 +3,6 @@ import { Telegraf, Context } from 'telegraf';
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import materials from '../public/material.json'; // Adjust path based on your project structure
 import { saveToFirebase, logMessage } from './utils'; // Adjust path to utils
-import { VercelRequestBody } from '@vercel/node';
 
 // Define material types
 interface MaterialItem {
@@ -22,7 +21,7 @@ const CASHFREE_CLIENT_SECRET = process.env.CASHFREE_CLIENT_SECRET || '';
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || '';
 const MATERIAL_BOT_USERNAME = 'Material_eduhubkmrbot';
-const PAYMENT_AMOUNT = 100; // Fixed amount in INR
+const PAYMENT_AMOUNT = 100; // Fixed amount in INR, adjust as needed
 const ADMIN_ID = 6930703214;
 
 // Initialize bot
@@ -128,15 +127,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     customerName,
     customerEmail,
     customerPhone,
-  } = req.body as VercelRequestBody & {
-    productId: string;
-    productName: string;
-    amount: number;
-    telegramLink: string;
-    customerName: string;
-    customerEmail: string;
-    customerPhone: string;
-  };
+  } = req.body;
 
   if (!productId || !productName || !amount || !telegramLink || !customerName || !customerEmail || !customerPhone) {
     return res.status(400).json({ success: false, error: 'Missing required fields' });
@@ -153,73 +144,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   });
 
   return res.status(result.success ? 200 : 500).json(result);
-}
-
-// Webhook handler for Cashfree payment status
-export async function webhook(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Method Not Allowed' });
-  }
-
-  const { order_id, order_status, cf_payment_id, customer_details, payment_status } = req.body;
-
-  // Validate webhook payload
-  if (!order_id || !order_status || !customer_details) {
-    return res.status(400).json({ success: false, error: 'Invalid webhook payload' });
-  }
-
-  try {
-    // Fetch order details to get telegramLink
-    const orderResponse = await axios.get(
-      process.env.NODE_ENV === 'production'
-        ? `https://api.cashfree.com/pg/orders/${order_id}`
-        : `https://sandbox.cashfree.com/pg/orders/${order_id}`,
-      {
-        headers: {
-          'x-api-version': '2022-09-01',
-          'x-client-id': CASHFREE_CLIENT_ID,
-          'x-client-secret': CASHFREE_CLIENT_SECRET,
-        },
-      }
-    );
-
-    const telegramLink = orderResponse.data.order_note;
-    const customerId = customer_details.customer_id.replace('cust_', '').split('_')[0]; // Extract user ID
-
-    if (order_status === 'PAID' && payment_status === 'SUCCESS') {
-      // Send material link to user
-      await bot.telegram.sendMessage(
-        customerId,
-        `🎉 Payment successful! Here is your material link:\n${telegramLink}`,
-        { parse_mode: 'Markdown' }
-      );
-
-      // Notify admin
-      await bot.telegram.sendMessage(
-        ADMIN_ID,
-        `*Payment Successful!*\n\n*Order ID:* ${order_id}\n*Payment ID:* ${cf_payment_id}\n*Customer:* ${customer_details.customer_name}\n*Material Link:* ${telegramLink}`,
-        { parse_mode: 'Markdown' }
-      );
-    } else {
-      // Handle payment failure
-      await bot.telegram.sendMessage(
-        customerId,
-        `❌ Payment failed for Order ID: ${order_id}. Please try again or contact support.`,
-        { parse_mode: 'Markdown' }
-      );
-
-      await bot.telegram.sendMessage(
-        ADMIN_ID,
-        `*Payment Failed!*\n\n*Order ID:* ${order_id}\n*Payment ID:* ${cf_payment_id || 'N/A'}\n*Customer:* ${customer_details.customer_name}\n*Status:* ${order_status}`,
-        { parse_mode: 'Markdown' }
-      );
-    }
-
-    return res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Webhook processing failed:', error?.response?.data || error.message);
-    return res.status(500).json({ success: false, error: 'Webhook processing failed' });
-  }
 }
 
 // Register /search command
@@ -322,6 +246,11 @@ bot.command('search', async (ctx: Context) => {
 
 // Export bot for Vercel
 export const startCashfreeBot = async (req: VercelRequest, res: VercelResponse) => {
-  await bot.handleUpdate(req.body);
-  return res.status(200).json({ success: true });
+  try {
+    await bot.handleUpdate(req.body);
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Error handling Telegram update:', error);
+    return res.status(500).json({ success: false, error: 'Failed to process Telegram update' });
+  }
 };
