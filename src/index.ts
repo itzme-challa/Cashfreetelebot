@@ -9,7 +9,7 @@ import { greeting, checkMembership } from './text/greeting';
 import { production, development } from './core';
 import { setupBroadcast } from './commands/broadcast';
 
-import { startCashfreeBot } from './commands/cashfree'; // Import Cashfree handler
+import { startCashfreeBot } from './cashfree'; // Import Cashfree handler
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ENVIRONMENT = process.env.NODE_ENV || '';
