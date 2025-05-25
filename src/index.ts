@@ -8,8 +8,8 @@ import { about } from './commands/about';
 import { greeting, checkMembership } from './text/greeting';
 import { production, development } from './core';
 import { setupBroadcast } from './commands/broadcast';
-
 import { startCashfreeBot } from './cashfree'; // Import Cashfree handler
+import webhook from '../pages/api/webhook'; // Import webhook handler
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ENVIRONMENT = process.env.NODE_ENV || '';
@@ -21,6 +21,9 @@ if (!BOT_TOKEN) throw new Error('BOT_TOKEN not provided!');
 console.log(`Running bot in ${ENVIRONMENT} mode`);
 
 const bot = new Telegraf(BOT_TOKEN);
+
+// Helper to check private chat type
+const isPrivateChat = (type?: string) => type === 'private';
 
 // Middleware for membership check
 bot.use(async (ctx, next) => {
@@ -153,22 +156,6 @@ bot.on('message', async (ctx) => {
     }
   }
 
-  const isPrivate = isPrivateChat(chat.type);
-  const isGroup = chat.type === 'group' || chat.type === 'supergroup';
-  const mentionedEntity = message.entities?.find(
-    (e) =>
-      e.type === 'mention' &&
-      message.text?.slice(e.offset, e.offset + e.length).toLowerCase() ===
-        `@${BOT_USERNAME.toLowerCase()}`
-  );
-
-  if (message.text && (isPrivate || (isGroup && mentionedEntity))) {
-    if (mentionedEntity) {
-      ctx.message.text = message.text.replace(`@${BOT_USERNAME}`, '').trim();
-    }
-    await studySearch()(ctx);
-  }
-
   if (!alreadyNotified && chat.id !== ADMIN_ID) {
     const name = user.first_name || chat.title || 'Unknown';
     const username = user.username ? `@${user.username}` : chat.username ? `@${chat.username}` : 'N/A';
@@ -218,14 +205,27 @@ bot.action('refresh_users', async (ctx) => {
 
 // Vercel export to handle both bot updates and Cashfree webhook
 export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
-  if (req.body && 'update_id' in req.body) {
-    // Handle Telegram bot updates
-    await production(req, res, bot);
-  } else if (req.body && 'order_id' in req.body) {
-    // Handle Cashfree webhook
-    await webhook(req, res);
-  } else {
-    return res.status(400).json({ success: false, error: 'Invalid request' });
+  try {
+    if (req.body && 'update_id' in req.body) {
+      // Handle Telegram bot updates
+      await production(req, res, bot);
+    } else if (req.body && 'order_id' in req.body) {
+      // Handle Cashfree webhook
+      await webhook(req, res);
+    } else {
+      console.error('Invalid request received:', {
+        body: req.body,
+        headers: req.headers,
+        method: req.method,
+      });
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid request: Expected Telegram update or Cashfree webhook',
+      });
+    }
+  } catch (error) {
+    console.error('Error in startVercel:', error);
+    return res.status(500).json({ success: false, error: 'Server error' });
   }
 };
 
