@@ -7,13 +7,13 @@ import { handleTranslateCommand } from './commands/translate';
 import { about } from './commands/about';
 import { greeting, checkMembership } from './text/greeting';
 import { setupBroadcast } from './commands/broadcast';
-import { startCashfreeBot } from './cashfree'; // Import Cashfree bot handler
 import webhook from '../pages/api/webhook';
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ENVIRONMENT = process.env.NODE_ENV || '';
 const ADMIN_ID = 6930703214;
 const BOT_USERNAME = 'SearchNEETJEEBot';
+const MATERIAL_BOT_USERNAME = 'Material_eduhubkmrbot';
 
 if (!BOT_TOKEN) throw new Error('BOT_TOKEN not provided!');
 
@@ -33,7 +33,7 @@ bot.use(async (ctx, next) => {
   await next();
 });
 
-// Command handlers from cashfree.ts (integrated here to avoid separate bot instance)
+// /search command handler (moved from cashfree.ts)
 bot.command('search', async (ctx: Context) => {
   if (!isPrivateChat(ctx.chat?.type)) {
     return ctx.reply('This command is only available in private chats.');
@@ -51,7 +51,7 @@ bot.command('search', async (ctx: Context) => {
   // Log the search
   await logMessage(chat.id, `/search ${query}`, user);
 
-  // Search materials (assuming searchMaterials is exported from cashfree.ts)
+  // Search materials
   const { searchMaterials } = require('./cashfree');
   const results = searchMaterials(query);
   if (results.length === 0) {
@@ -97,14 +97,14 @@ bot.command('search', async (ctx: Context) => {
     const { createOrder } = require('./cashfree');
     const paymentLinks: string[] = [];
     for (const item of results) {
-      const telegramLink = `https://t.me/${'Material_eduhubkmrbot'}?start=${item.key}`;
+      const telegramLink = `https://t.me/${MATERIAL_BOT_USERNAME}?start=${item.key}`;
       const productId = `${user.id}_${item.key}`;
       const productName = item.label;
 
       const orderResult = await createOrder({
         productId,
         productName,
-        amount: 100, // Fixed amount from cashfree.ts
+        amount: 100,
         telegramLink,
         customerName,
         customerEmail,
@@ -305,9 +305,18 @@ bot.action('refresh_users', async (ctx) => {
 // Vercel export to handle both bot updates and Cashfree webhook
 export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
   try {
+    console.log('Received request:', {
+      method: req.method,
+      headers: req.headers,
+      body: JSON.stringify(req.body, null, 2),
+    });
+
     if (req.method === 'GET') {
-      // Handle health checks or favicon requests
       return res.status(200).json({ success: true, message: 'Server is running' });
+    }
+
+    if (req.method !== 'POST') {
+      return res.status(405).json({ success: false, error: 'Method Not Allowed' });
     }
 
     if (!req.body) {
@@ -322,12 +331,14 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
     }
 
     if ('update_id' in req.body) {
-      // Handle Telegram bot updates (including Cashfree bot logic)
+      console.log('Processing Telegram update:', req.body.update_id);
       await bot.handleUpdate(req.body);
-      return res.status(200).json({ success: true });
+      return res.status(200).json({ success: true, message: 'Telegram update processed' });
     } else if ('order_id' in req.body) {
-      // Handle Cashfree webhook
+      console.log('Processing Cashfree webhook:', req.body.order_id);
       await webhook(req, res);
+      // Note: webhook handler should handle its own response
+      return;
     } else {
       console.error('Invalid request payload:', {
         body: req.body,
@@ -341,12 +352,13 @@ export const startVercel = async (req: VercelRequest, res: VercelResponse) => {
     }
   } catch (error) {
     console.error('Error in startVercel:', error);
-    return res.status(500).json({ success: false, error: 'Server error' });
+    return res.status(500).json({ success: false, error: 'Server error', details: error.message });
   }
 };
 
 if (ENVIRONMENT !== 'production') {
-  // Launch bot in development mode (e.g., using polling)
-  bot.launch();
-  console.log('Bot started in development mode');
+  console.log('Starting bot in development mode with polling');
+  bot.launch().catch((err) => {
+    console.error('Failed to start bot in development mode:', err);
+  });
 }
