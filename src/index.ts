@@ -8,7 +8,7 @@ import { about } from './commands/about';
 import { greeting, checkMembership } from './text/greeting';
 import { production, development } from './core';
 import { setupBroadcast } from './commands/broadcast';
-import { studySearch } from './commands/study';
+
 import { startCashfreeBot } from './commands/cashfree'; // Import Cashfree handler
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
